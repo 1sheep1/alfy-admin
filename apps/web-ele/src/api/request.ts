@@ -18,7 +18,8 @@ import { useAuthStore } from '#/store';
 
 import { refreshTokenApi } from './core';
 
-const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
+// 使用标准 Vite 环境变量，部署时由 .env.production 或服务器构建参数提供。
+const { apiURL } = useAppConfig(import.meta.env, false);
 
 function createRequestClient(baseURL: string) {
   const client = new RequestClient({

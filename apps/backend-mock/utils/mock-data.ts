@@ -11,25 +11,26 @@ export const MOCK_USERS: UserInfo[] = [
   {
     id: 0,
     password: '123456',
-    realName: 'Vben',
-    roles: ['super'],
-    username: 'vben',
+    realName: '系统管理员',
+    roles: ['super_admin'],
+    username: 'admin',
+    homePath: '/dashboard',
   },
   {
     id: 1,
     password: '123456',
-    realName: 'Admin',
-    roles: ['admin'],
-    username: 'admin',
-    homePath: '/workspace',
+    realName: '内容运营',
+    roles: ['content_admin'],
+    username: 'editor',
+    homePath: '/dashboard',
   },
   {
     id: 2,
     password: '123456',
-    realName: 'Jack',
-    roles: ['user'],
-    username: 'jack',
-    homePath: '/analytics',
+    realName: '商务跟进',
+    roles: ['inquiry_admin'],
+    username: 'inquiry',
+    homePath: '/interaction/inquiries',
   },
 ];
 
@@ -37,17 +38,17 @@ export const MOCK_CODES = [
   // super
   {
     codes: ['AC_100100', 'AC_100110', 'AC_100120', 'AC_100010'],
-    username: 'vben',
+    username: 'admin',
   },
   {
     // admin
     codes: ['AC_100010', 'AC_100020', 'AC_100030'],
-    username: 'admin',
+    username: 'editor',
   },
   {
     // user
     codes: ['AC_1000001', 'AC_1000002'],
-    username: 'jack',
+    username: 'inquiry',
   },
 ];
 

@@ -8,6 +8,19 @@ import { defineOverridesPreferences } from '@vben/preferences';
 export const overridesPreferences = defineOverridesPreferences({
   // overrides
   app: {
+    accessMode: 'frontend',
+    enableRefreshToken: true,
     name: import.meta.env.VITE_APP_TITLE,
+  },
+  logo: {
+    enable: true,
+    source: '/logo.png',
+  },
+  navigation: {
+    accordion: true,
+  },
+  theme: {
+    colorPrimary: '#0f6b70',
+    mode: 'light',
   },
 });

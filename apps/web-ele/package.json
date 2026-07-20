@@ -48,6 +48,9 @@
     "vue-router": "catalog:"
   },
   "devDependencies": {
+    "autoprefixer": "catalog:",
+    "cssnano": "catalog:",
+    "tailwindcss": "catalog:",
     "unplugin-element-plus": "catalog:"
   }
 }
