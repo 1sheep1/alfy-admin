@@ -22,29 +22,29 @@ allowBuilds:
   vue-demi: true
 catalog:
   '@ast-grep/napi': ^0.31.1
-  '@changesets/changelog-github': ^0.5.0
+  '@changesets/changelog-github': ^0.7.0
   '@changesets/cli': ^2.27.11
-  '@changesets/git': ^3.0.2
+  '@changesets/git': ^3.0.4
   '@clack/prompts': ^0.9.0
   '@commitlint/cli': ^19.6.1
   '@commitlint/config-conventional': ^19.6.0
   '@ctrl/tinycolor': ^4.1.0
   '@eslint/js': ^9.17.0
   '@faker-js/faker': ^9.3.0
-  '@iconify/json': ^2.2.289
+  '@iconify/json': ^2.2.503
   '@iconify/tailwind': ^1.2.0
   '@iconify/vue': ^4.2.0
   '@intlify/core-base': ^10.0.5
   '@intlify/unplugin-vue-i18n': ^6.0.2
   '@jspm/generator': ^2.4.1
   '@manypkg/get-packages': ^2.2.2
-  '@nolebase/vitepress-plugin-git-changelog': ^2.12.0
+  '@nolebase/vitepress-plugin-git-changelog': ^2.18.2
   '@playwright/test': ^1.49.1
   '@pnpm/workspace.read-manifest': ^1000.0.1
   '@stylistic/stylelint-plugin': ^3.1.1
   '@tailwindcss/nesting': 0.0.0-insiders.565cd3e
   '@tailwindcss/typography': ^0.5.15
-  '@tanstack/vue-query': ^5.62.9
+  '@tanstack/vue-query': ^5.101.3
   '@tanstack/vue-store': ^0.6.0
   '@types/archiver': ^6.0.3
   '@types/eslint': ^9.6.1
