@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import type { UploadFile, UploadFiles, UploadRawFile } from 'element-plus';
+
 import type { ArticleCategoryRecord } from '#/api';
 import type { ContentItem, ContentResource, ContentStatus } from '#/data/cms';
 
@@ -10,6 +12,7 @@ import {
   ElCol,
   ElDialog,
   ElDivider,
+  ElEmpty,
   ElForm,
   ElFormItem,
   ElImage,
@@ -24,6 +27,7 @@ import {
   ElTable,
   ElTableColumn,
   ElTag,
+  ElUpload,
 } from 'element-plus';
 
 import {
@@ -36,7 +40,9 @@ import {
   listMedia,
   listProductCategories,
   saveContent,
+  uploadMedia,
 } from '#/api';
+import RichTextEditor from '#/components/rich-text-editor.vue';
 import { cmsState, resourceMeta } from '#/data/cms';
 import {
   contentFromBackend,
@@ -60,6 +66,21 @@ const featuresText = ref('');
 const specificationsText = ref('');
 const capabilityRowsText = ref('');
 const pillarsText = ref('');
+const contentEditorRef = ref<{ insertHtml: (html: string) => void }>();
+const inlineImageDialogVisible = ref(false);
+const contentPreviewVisible = ref(false);
+const selectedInlineMediaId = ref<number>();
+const inlineImageAlt = ref('');
+const inlineImageCaption = ref('');
+const inlineImageUploading = ref(false);
+
+const MAX_INLINE_IMAGE_SIZE = 30 * 1024 * 1024;
+const ALLOWED_INLINE_IMAGE_TYPES = new Set([
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]);
 
 const meta = computed(() => resourceMeta[props.resource]);
 const isHomePlacementResource = computed(() => props.resource === 'articles');
@@ -104,7 +125,9 @@ const stats = computed(() => ({
 const imageOptions = computed(() =>
   cmsState.media.filter((asset) => asset.type === 'image'),
 );
-
+const selectedInlineMedia = computed(() =>
+  imageOptions.value.find((asset) => asset.id === selectedInlineMediaId.value),
+);
 const emptyForm = (): ContentItem => ({
   category: categoryOptions.value[0] || '未分类',
   categoryId: undefined,
@@ -142,6 +165,64 @@ const emptyForm = (): ContentItem => ({
 
 const form = reactive<ContentItem>(emptyForm());
 const rawForm = computed<Record<string, any>>(() => form.raw || {});
+const contentPreviewDocument = computed(() => {
+  const content = (form.contentHtml || '').replaceAll(
+    /(["'])alfy-media:(\d+)\1/gi,
+    (source, quote: string, id: string) => {
+      const asset = imageOptions.value.find((item) => item.id === Number(id));
+      return asset?.url ? `${quote}${asset.url}${quote}` : source;
+    },
+  );
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob: data: http: https:; style-src 'unsafe-inline'">
+  <style>
+    * { box-sizing: border-box; }
+    body { max-width: 820px; margin: 0 auto; padding: 28px; color: #3e4750; font: 16px/1.85 Inter, "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; overflow-wrap: anywhere; }
+    h1, h2, h3 { color: #152f36; line-height: 1.35; letter-spacing: -.035em; }
+    h1 { margin: 44px 0 20px; font-size: 36px; }
+    h2 { margin: 42px 0 18px; font-size: 28px; }
+    h3 { margin: 34px 0 14px; font-size: 22px; }
+    body > :first-child { margin-top: 0; }
+    body > :last-child { margin-bottom: 0; }
+    p { margin: 0 0 18px; }
+    ul, ol { margin: 18px 0; padding-left: 2em; }
+    li { margin: 6px 0; }
+    figure { margin: 32px 0; }
+    img, video { display: block; width: 100%; max-width: 100%; height: auto; }
+    figcaption { margin-top: 10px; color: #78868b; font-size: 13px; line-height: 1.6; text-align: center; }
+    blockquote { margin: 24px 0; padding: 4px 0 4px 18px; color: #52636b; border-left: 3px solid #0e7478; }
+    hr { margin: 32px 0; border: 0; border-top: 1px solid #dfe3e6; }
+    pre { margin: 24px 0; padding: 18px 20px; background: #e9edef; overflow-x: auto; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; }
+    th, td { padding: 12px 14px; border: 1px solid #dfe3e6; text-align: left; }
+    a { color: #e51b23; text-decoration: underline; text-underline-offset: 3px; }
+    [data-font="sans"] { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+    [data-font="serif"] { font-family: Georgia, "Noto Serif SC", "Songti SC", serif; }
+    [data-font="mono"] { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    [data-size="small"] { font-size: .875em; }
+    [data-size="large"] { font-size: 1.25em; }
+    [data-size="xlarge"] { font-size: 1.5em; }
+    [data-color="black"] { color: #202124; }
+    [data-color="red"] { color: #c62828; }
+    [data-color="orange"] { color: #e67e22; }
+    [data-color="green"] { color: #1b7f5f; }
+    [data-color="blue"] { color: #2563eb; }
+    [data-color="gray"] { color: #6b7280; }
+    [data-highlight="yellow"] { background: #fff0a6; }
+    [data-highlight="blue"] { background: #cfe8ff; }
+    [data-highlight="green"] { background: #d8f3dc; }
+    [data-align="center"] { text-align: center; }
+    [data-align="right"] { text-align: right; }
+    [data-align="justify"] { text-align: justify; }
+  </style>
+</head>
+<body>${content || '<p>暂无正文内容</p>'}</body>
+</html>`;
+});
 
 function replaceResource(items: ContentItem[]) {
   const retained = cmsState.content.filter(
@@ -153,6 +234,114 @@ function replaceResource(items: ContentItem[]) {
 function readableSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function selectInlineImage(id: number) {
+  const asset = imageOptions.value.find((item) => item.id === id);
+  selectedInlineMediaId.value = id;
+  inlineImageAlt.value =
+    asset?.alt || asset?.name.replace(/\.[^.]+$/, '') || '新闻正文图片';
+  inlineImageCaption.value = '';
+}
+
+function openInlineImagePicker() {
+  selectedInlineMediaId.value = undefined;
+  inlineImageAlt.value = '';
+  inlineImageCaption.value = '';
+  inlineImageDialogVisible.value = true;
+}
+
+function insertInlineImage() {
+  const asset = selectedInlineMedia.value;
+  if (!asset) {
+    ElMessage.warning('请先选择一张图片');
+    return;
+  }
+
+  const caption = inlineImageCaption.value.trim();
+  const figure = [
+    '<figure>',
+    `  <img src="alfy-media:${asset.id}" alt="${escapeHtml(inlineImageAlt.value.trim() || asset.name)}" loading="lazy">`,
+    caption ? `  <figcaption>${escapeHtml(caption)}</figcaption>` : '',
+    '</figure>',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const editor = contentEditorRef.value;
+  if (!editor) {
+    ElMessage.error('正文编辑器尚未就绪，请稍后重试');
+    return;
+  }
+
+  editor.insertHtml(figure);
+
+  inlineImageDialogVisible.value = false;
+  ElMessage.success('图片已插入正文，保存后即可发布');
+}
+
+async function uploadInlineImage(
+  _uploadFile: UploadFile,
+  uploadFiles: UploadFiles,
+) {
+  const latest = uploadFiles.at(-1)?.raw as undefined | UploadRawFile;
+  if (!latest) return;
+  if (latest.size > MAX_INLINE_IMAGE_SIZE) {
+    ElMessage.error('单张图片不能超过 30MB');
+    return;
+  }
+  if (!ALLOWED_INLINE_IMAGE_TYPES.has(latest.type.toLowerCase())) {
+    ElMessage.error('仅支持 JPG、PNG、WebP 和 GIF 图片');
+    return;
+  }
+
+  inlineImageUploading.value = true;
+  try {
+    const saved = await uploadMedia(
+      latest,
+      latest.name.replace(/\.[^.]+$/, ''),
+    );
+    const preview = await getMediaPreviewUrl(saved.adminUrl);
+    const asset = {
+      alt: saved.altText || latest.name.replace(/\.[^.]+$/, ''),
+      createdAt: saved.createdAt,
+      id: saved.id,
+      name: saved.originalFilename,
+      size: readableSize(saved.fileSize),
+      sourceUrl: saved.adminUrl,
+      type: 'image' as const,
+      url: preview,
+    };
+    const existingIndex = cmsState.media.findIndex(
+      (item) => item.id === saved.id,
+    );
+    if (existingIndex !== -1) {
+      const existing = cmsState.media[existingIndex];
+      if (existing?.url.startsWith('blob:')) URL.revokeObjectURL(existing.url);
+      cmsState.media.splice(existingIndex, 1);
+    }
+    cmsState.media.unshift(asset);
+    selectInlineImage(asset.id);
+    ElMessage.success('图片已上传，请确认说明后插入正文');
+  } finally {
+    inlineImageUploading.value = false;
+  }
+}
+
+function openContentPreview() {
+  if (!form.contentHtml?.trim()) {
+    ElMessage.warning('请先填写正文内容');
+    return;
+  }
+  contentPreviewVisible.value = true;
 }
 
 async function loadReferences() {
@@ -510,7 +699,8 @@ function homePlacementLabel(value: unknown) {
       </ElCol>
       <ElCol :lg="6" :sm="12" :xs="24">
         <ElCard shadow="never">
-          <span>{{ isHomePlacementResource ? '首页展示' : '首页推荐' }}</span><strong>{{ stats.featured }}</strong>
+          <span>{{ isHomePlacementResource ? '首页展示' : '首页推荐' }}</span>
+          <strong>{{ stats.featured }}</strong>
         </ElCard>
       </ElCol>
     </ElRow>
@@ -553,7 +743,8 @@ function homePlacementLabel(value: unknown) {
                 {{ row.title.slice(0, 1) }}
               </div>
               <div>
-                <strong>{{ row.title }}</strong><small>/{{ row.slug }}</small>
+                <strong>{{ row.title }}</strong>
+                <small>/{{ row.slug }}</small>
               </div>
             </div>
           </template>
@@ -573,7 +764,8 @@ function homePlacementLabel(value: unknown) {
           <template #default="{ row }">
             <ElTag v-if="homePlacementLabel(row)" effect="plain" type="danger">
               {{ homePlacementLabel(row) }}
-</ElTag><span v-else>-</span>
+            </ElTag>
+            <span v-else>-</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="排序" prop="sortOrder" width="80" />
@@ -745,12 +937,14 @@ function homePlacementLabel(value: unknown) {
           </ElCol>
           <template v-if="props.resource === 'products'">
             <ElCol :span="24">
-              <ElFormItem label="产品特点（每行或逗号分隔一项）">
+              <ElFormItem
+                label="产品特点（官网独立展示模块，每行或逗号分隔一项）"
+              >
                 <ElInput v-model="featuresText" :rows="4" type="textarea" />
               </ElFormItem>
             </ElCol>
             <ElCol :span="24">
-              <ElFormItem label="产品参数 JSON">
+              <ElFormItem label="产品参数 JSON（官网独立展示模块）">
                 <ElInput
                   v-model="specificationsText"
                   :rows="6"
@@ -798,57 +992,6 @@ function homePlacementLabel(value: unknown) {
             </ElCol>
           </template>
           <template v-if="props.resource === 'cases'">
-            <ElCol :md="12" :xs="24">
-              <ElFormItem label="客户名称">
-                <ElInput v-model="rawForm.clientName" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :md="12" :xs="24">
-              <ElFormItem label="项目地点">
-                <ElInput v-model="rawForm.location" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :span="24">
-              <ElFormItem label="项目背景">
-                <ElInput
-                  v-model="rawForm.background"
-                  :rows="3"
-                  type="textarea"
-                />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :span="24">
-              <ElFormItem label="客户需求">
-                <ElInput
-                  v-model="rawForm.customerNeed"
-                  :rows="3"
-                  type="textarea"
-                />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :span="24">
-              <ElFormItem label="解决方案">
-                <ElInput v-model="rawForm.solution" :rows="3" type="textarea" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :span="24">
-              <ElFormItem label="实施过程">
-                <ElInput
-                  v-model="rawForm.implementation"
-                  :rows="3"
-                  type="textarea"
-                />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :span="24">
-              <ElFormItem label="成果总结">
-                <ElInput
-                  v-model="rawForm.resultSummary"
-                  :rows="3"
-                  type="textarea"
-                />
-              </ElFormItem>
-            </ElCol>
             <ElCol :span="24">
               <ElFormItem label="关联产品">
                 <ElSelect
@@ -914,13 +1057,28 @@ function homePlacementLabel(value: unknown) {
             v-if="!['banners', 'partners'].includes(props.resource)"
             :span="24"
           >
-            <ElFormItem label="正文 HTML">
-              <ElInput
+            <ElFormItem>
+              <template #label>
+                <div class="content-editor-label">
+                  <span>正文内容（支持图文排版）</span>
+                  <div>
+                    <ElButton size="small" @click="openContentPreview">
+                      预览正文
+                    </ElButton>
+                  </div>
+                </div>
+              </template>
+              <RichTextEditor
+                ref="contentEditorRef"
                 v-model="form.contentHtml"
-                :rows="8"
-                placeholder="填写正文 HTML；后端保存时会进行安全清洗"
-                type="textarea"
+                :media-image-picker="true"
+                :min-height="300"
+                placeholder="请输入正文；可设置字体、字号、颜色、对齐方式，并从工具栏插入图片"
+                @request-image="openInlineImagePicker"
               />
+              <p class="content-editor-tip">
+                图片会插入当前光标位置；可从素材库选择或直接上传，保存后自动关联素材。
+              </p>
             </ElFormItem>
           </ElCol>
           <template v-if="props.resource === 'banners'">
@@ -1040,6 +1198,90 @@ function homePlacementLabel(value: unknown) {
           保存内容
         </ElButton>
       </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="inlineImageDialogVisible"
+      append-to-body
+      title="插入正文图片"
+      width="860px"
+    >
+      <div class="inline-image-toolbar">
+        <p>选择素材后可修改图片说明，图片将插入正文当前光标位置。</p>
+        <ElUpload
+          :auto-upload="false"
+          :on-change="uploadInlineImage"
+          :show-file-list="false"
+          accept=".jpg,.jpeg,.png,.webp,.gif"
+        >
+          <ElButton :loading="inlineImageUploading" type="primary">
+            上传新图片
+          </ElButton>
+        </ElUpload>
+      </div>
+
+      <div v-if="imageOptions.length > 0" class="inline-image-grid">
+        <button
+          v-for="asset in imageOptions"
+          :key="asset.id"
+          :class="{ selected: selectedInlineMediaId === asset.id }"
+          type="button"
+          @click="selectInlineImage(asset.id)"
+        >
+          <img
+            v-if="asset.url"
+            :alt="asset.alt || asset.name"
+            :src="asset.url"
+          />
+          <span v-else class="inline-image-placeholder">图片预览不可用</span>
+          <strong :title="asset.name">{{ asset.name }}</strong>
+        </button>
+      </div>
+      <ElEmpty v-else description="素材库暂无图片，可先上传一张图片" />
+
+      <div v-if="selectedInlineMedia" class="inline-image-fields">
+        <ElFormItem label="图片替代文字">
+          <ElInput
+            v-model="inlineImageAlt"
+            maxlength="160"
+            placeholder="用于无障碍访问和图片加载失败时显示"
+            show-word-limit
+          />
+        </ElFormItem>
+        <ElFormItem label="图片说明（可选）">
+          <ElInput
+            v-model="inlineImageCaption"
+            maxlength="200"
+            placeholder="例如：奥飞新材与中南大学签约现场"
+            show-word-limit
+          />
+        </ElFormItem>
+      </div>
+
+      <template #footer>
+        <ElButton @click="inlineImageDialogVisible = false">取消</ElButton>
+        <ElButton
+          :disabled="!selectedInlineMedia"
+          type="primary"
+          @click="insertInlineImage"
+        >
+          插入当前位置
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="contentPreviewVisible"
+      append-to-body
+      title="官网正文预览"
+      width="900px"
+    >
+      <iframe
+        :srcdoc="contentPreviewDocument"
+        class="content-preview-frame"
+        sandbox=""
+        title="官网正文预览"
+      ></iframe>
     </ElDialog>
   </div>
 </template>
@@ -1167,6 +1409,104 @@ function homePlacementLabel(value: unknown) {
   color: #8a979b;
 }
 
+.content-editor-label {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.content-editor-tip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #7c8b90;
+}
+
+.inline-image-toolbar {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.inline-image-toolbar p {
+  margin: 0;
+  color: #65767c;
+}
+
+.inline-image-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  max-height: 420px;
+  padding: 2px;
+  overflow-y: auto;
+}
+
+.inline-image-grid button {
+  padding: 0;
+  overflow: hidden;
+  color: #263e44;
+  text-align: left;
+  cursor: pointer;
+  background: #fff;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px #e0e7e9;
+}
+
+.inline-image-grid button.selected {
+  border-color: #0e7478;
+  box-shadow: 0 0 0 3px rgb(14 116 120 / 14%);
+}
+
+.inline-image-grid img,
+.inline-image-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 120px;
+  font-size: 12px;
+  color: #879499;
+  object-fit: cover;
+  background: #edf2f3;
+}
+
+.inline-image-grid strong {
+  display: block;
+  padding: 10px;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-image-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 16px;
+  margin-top: 20px;
+  background: #f5f8f8;
+  border-radius: 10px;
+}
+
+.inline-image-fields :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.content-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(680px, 70vh);
+  background: #fff;
+  border: 1px solid #e2e8ea;
+  border-radius: 10px;
+}
+
 @media (max-width: 760px) {
   .cms-page {
     padding: 14px;
@@ -1179,6 +1519,20 @@ function homePlacementLabel(value: unknown) {
   }
 
   .filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .content-editor-label,
+  .inline-image-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .inline-image-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inline-image-fields {
     grid-template-columns: 1fr;
   }
 }

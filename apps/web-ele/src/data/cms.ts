@@ -162,7 +162,7 @@ export const resourceMeta: Record<
   },
   cases: {
     categories: ['建筑节能', '工业节能', '联合创新'],
-    description: '维护项目背景、解决方案、应用效果和合作伙伴',
+    description: '维护案例封面、摘要、正文、关联产品与发布状态',
     label: '案例',
   },
   technologies: {

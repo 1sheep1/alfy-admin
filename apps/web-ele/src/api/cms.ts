@@ -50,6 +50,8 @@ export interface MediaRecord {
 
 export interface TechnologyBlockRecord {
   description?: string;
+  imageMediaId?: null | number;
+  imageUrl?: null | string;
   title: string;
 }
 
@@ -361,12 +363,6 @@ export async function listProductCategories() {
   return result.records;
 }
 
-export function getProductCategory(id: number) {
-  return requestClient.get<ProductCategoryRecord>(
-    `/admin/product-categories/${id}`,
-  );
-}
-
 export function saveProductCategory(
   id: null | number,
   payload: Record<string, unknown>,
@@ -409,6 +405,27 @@ export function uploadMedia(file: File, altText = '') {
   return requestClient.post<MediaRecord>('/admin/media', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
+}
+
+export function updateMedia(
+  id: number,
+  payload: {
+    altText: string;
+    file?: File;
+    originalFilename: string;
+  },
+) {
+  const formData = new FormData();
+  formData.append('originalFilename', payload.originalFilename);
+  formData.append('altText', payload.altText);
+  if (payload.file) formData.append('file', payload.file);
+  return requestClient.put<MediaRecord>(`/admin/media/${id}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+}
+
+export function deleteMedia(id: number) {
+  return requestClient.delete(`/admin/media/${id}`);
 }
 
 export async function getMediaPreviewUrl(adminUrl: string) {

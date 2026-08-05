@@ -29,6 +29,7 @@ import {
   listMedia,
   saveContentPage,
 } from '#/api';
+import RichTextMediaEditor from '#/components/rich-text-media-editor.vue';
 
 interface PageDefinition {
   description: string;
@@ -51,6 +52,7 @@ interface CooperationContentData {
   faqTitle?: string;
   faqs?: ContentBlock[];
   highlightText?: string;
+  navLabel?: string;
   process?: ContentBlock[];
   processEyebrow?: string;
   processTitle?: string;
@@ -68,6 +70,7 @@ interface CooperationForm {
   faqs: ContentBlock[];
   highlightText: string;
   id?: number;
+  navLabel: string;
   pageKey: string;
   process: ContentBlock[];
   processEyebrow: string;
@@ -91,10 +94,10 @@ interface MediaOption {
 
 const definitions: PageDefinition[] = [
   {
-    description: '合作栏目入口，维护主视觉、三类合作入口、合作流程与常见问题。',
+    description: '合作栏目入口，维护主视觉、子导航名称与富文本正文。',
     fallbackTitle: '开放共赢，共建',
     key: 'cooperation',
-    label: '合作综合介绍',
+    label: '合作总览',
     overview: true,
     path: '/cooperation',
   },
@@ -144,7 +147,6 @@ const defaultFaqs = (): ContentBlock[] => [
   },
 ];
 
-const emptyBlock = (): ContentBlock => ({ description: '', title: '' });
 const emptyForm = (): CooperationForm => ({
   actionLabel: '发起合作咨询',
   contentHtml: '',
@@ -155,6 +157,7 @@ const emptyForm = (): CooperationForm => ({
   faqs: defaultFaqs(),
   highlightText: '',
   id: undefined,
+  navLabel: '合作总览',
   pageKey: 'cooperation',
   process: defaultProcess(),
   processEyebrow: '合作流程',
@@ -270,6 +273,8 @@ function fillForm(definition: PageDefinition, page?: ContentPageRecord) {
     faqs: normalizeBlocks(data.faqs, defaultFaqs),
     highlightText: data.highlightText || '',
     id: page?.id,
+    navLabel:
+      data.navLabel || (definition.overview ? '合作总览' : definition.label),
     pageKey: definition.key,
     process: normalizeBlocks(data.process, defaultProcess),
     processEyebrow: data.processEyebrow || '合作流程',
@@ -303,21 +308,13 @@ async function openEditor(
   }
 }
 
-function addBlock(target: 'faqs' | 'process') {
-  form[target].push(emptyBlock());
-}
-
-function removeBlock(target: 'faqs' | 'process', index: number) {
-  form[target].splice(index, 1);
-}
-
 function cleanBlocks(value: ContentBlock[]) {
   return value.filter((item) => item.title.trim() || item.description.trim());
 }
 
 async function save() {
-  if (!form.title.trim() || !form.summary.trim()) {
-    ElMessage.warning('请填写页面标题和简介');
+  if (!form.title.trim() || !form.summary.trim() || !form.navLabel.trim()) {
+    ElMessage.warning('请填写页面标题、简介和子导航名称');
     return;
   }
   saving.value = true;
@@ -326,6 +323,7 @@ async function save() {
       actionLabel: form.actionLabel || undefined,
       eyebrow: form.eyebrow || undefined,
       highlightText: form.highlightText || undefined,
+      navLabel: form.navLabel.trim(),
     };
     if (isOverview.value) {
       Object.assign(contentData, {
@@ -398,8 +396,7 @@ void load();
         <p>COOPERATION CONTENT</p>
         <h1>合作页面管理</h1>
         <span>
-          维护合作综合介绍与三个合作模式单页。每个页面可独立编辑、发布或下线；
-          此处内容不会修改首页底部写死的合作卡片。
+          维护合作总览与三个合作模式单页。四个子导航名称、主视觉和富文本正文均可独立编辑；保存并发布后同步到官网。
         </span>
       </div>
       <div class="hero-stat">
@@ -412,7 +409,7 @@ void load();
       <div class="section-heading">
         <div>
           <span>合作栏目入口</span>
-          <h2>合作综合介绍页面</h2>
+          <h2>合作总览单页</h2>
         </div>
       </div>
       <ElCard class="overview-card" shadow="never" v-loading="loading">
@@ -439,7 +436,7 @@ void load();
             type="primary"
             @click="openEditor(overviewCard.definition, overviewCard.page)"
           >
-            编辑总览
+            编辑单页
           </ElButton>
           <ElButton
             v-if="overviewCard.page?.status !== 'PUBLISHED'"
@@ -466,7 +463,7 @@ void load();
           <span>合作模式</span>
           <h2>三个可编辑合作单页</h2>
         </div>
-        <p>总览页的三张合作卡片会自动读取这些已发布单页。</p>
+        <p>四个页面共同组成官网合作栏目，子导航名称可分别修改。</p>
       </div>
       <div class="page-grid" v-loading="loading">
         <ElCard
@@ -522,12 +519,17 @@ void load();
     >
       <ElForm :model="form" label-position="top">
         <ElRow :gutter="18">
-          <ElCol :md="16" :xs="24">
+          <ElCol :md="12" :xs="24">
             <ElFormItem label="页面标题" required>
               <ElInput v-model="form.title" maxlength="80" show-word-limit />
             </ElFormItem>
           </ElCol>
-          <ElCol :md="8" :xs="24">
+          <ElCol :md="6" :xs="24">
+            <ElFormItem label="子导航名称" required>
+              <ElInput v-model="form.navLabel" maxlength="20" show-word-limit />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :md="6" :xs="24">
             <ElFormItem label="页面标识">
               <ElInput :model-value="form.pageKey" disabled />
             </ElFormItem>
@@ -594,101 +596,12 @@ void load();
           </ElCol>
         </ElRow>
 
-        <template v-if="isOverview">
-          <ElDivider content-position="left">合作模式区</ElDivider>
-          <ElRow :gutter="18">
-            <ElCol :md="8" :xs="24">
-              <ElFormItem label="区块小标题">
-                <ElInput v-model="form.sectionEyebrow" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :md="16" :xs="24">
-              <ElFormItem label="区块标题">
-                <ElInput v-model="form.sectionTitle" />
-              </ElFormItem>
-            </ElCol>
-          </ElRow>
-          <p class="field-help">
-            三张模式卡片的标题和简介来自下面三个合作单页，无需重复填写。
-          </p>
-
-          <ElDivider content-position="left">合作流程</ElDivider>
-          <ElRow :gutter="18">
-            <ElCol :md="8" :xs="24">
-              <ElFormItem label="区块小标题">
-                <ElInput v-model="form.processEyebrow" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :md="16" :xs="24">
-              <ElFormItem label="区块标题">
-                <ElInput v-model="form.processTitle" />
-              </ElFormItem>
-            </ElCol>
-          </ElRow>
-          <div
-            v-for="(block, index) in form.process"
-            :key="`process-${index}`"
-            class="block-editor"
-          >
-            <ElInput
-              v-model="block.title"
-              :placeholder="`步骤 ${index + 1} 标题`"
-            />
-            <ElInput
-              v-model="block.description"
-              :rows="2"
-              placeholder="步骤说明"
-              type="textarea"
-            />
-            <ElButton
-              plain
-              type="danger"
-              @click="removeBlock('process', index)"
-            >
-              删除
-            </ElButton>
-          </div>
-          <ElButton plain @click="addBlock('process')">+ 添加合作步骤</ElButton>
-
-          <ElDivider content-position="left">常见问题</ElDivider>
-          <ElRow :gutter="18">
-            <ElCol :md="8" :xs="24">
-              <ElFormItem label="区块小标题">
-                <ElInput v-model="form.faqEyebrow" />
-              </ElFormItem>
-            </ElCol>
-            <ElCol :md="16" :xs="24">
-              <ElFormItem label="区块标题">
-                <ElInput v-model="form.faqTitle" />
-              </ElFormItem>
-            </ElCol>
-          </ElRow>
-          <div
-            v-for="(block, index) in form.faqs"
-            :key="`faq-${index}`"
-            class="block-editor"
-          >
-            <ElInput v-model="block.title" :placeholder="`问题 ${index + 1}`" />
-            <ElInput
-              v-model="block.description"
-              :rows="2"
-              placeholder="回答内容"
-              type="textarea"
-            />
-            <ElButton plain type="danger" @click="removeBlock('faqs', index)">
-              删除
-            </ElButton>
-          </div>
-          <ElButton plain @click="addBlock('faqs')">+ 添加常见问题</ElButton>
-        </template>
-
         <ElDivider content-position="left">正文与咨询按钮</ElDivider>
-        <ElFormItem :label="isOverview ? '补充正文 HTML' : '页面正文 HTML'">
-          <ElInput
+        <ElFormItem label="页面正文（富文本）">
+          <RichTextMediaEditor
             v-model="form.contentHtml"
-            :rows="10"
-            placeholder="可填写段落、标题、列表和链接；后端保存时会安全清洗"
-            type="textarea"
+            :min-height="280"
+            placeholder="请输入页面正文；可设置字体、字号、颜色、对齐方式，并从工具栏插入图片"
           />
         </ElFormItem>
         <ElFormItem label="咨询按钮文字">
