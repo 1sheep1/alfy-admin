@@ -33,6 +33,7 @@ import {
   listTechnologyPages,
   saveTechnologyPage,
 } from '#/api';
+import RichTextMediaEditor from '#/components/rich-text-media-editor.vue';
 
 interface PageDefinition {
   description: string;
@@ -44,6 +45,7 @@ interface PageDefinition {
 
 interface TechnologyBlockForm {
   description: string;
+  imageMediaId?: number;
   title: string;
 }
 
@@ -102,6 +104,7 @@ const definitions: PageDefinition[] = [
 
 const emptyBlock = (): TechnologyBlockForm => ({
   description: '',
+  imageMediaId: undefined,
   title: '',
 });
 
@@ -159,8 +162,15 @@ function normalizeBlocks(value?: TechnologyBlockRecord[]) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => ({
     description: String(item?.description || ''),
+    imageMediaId: item?.imageMediaId || undefined,
     title: String(item?.title || ''),
   }));
+}
+
+function blockPreview(mediaId?: number) {
+  return (
+    mediaOptions.value.find((item) => item.id === mediaId)?.previewUrl || ''
+  );
 }
 
 function statusLabel(value?: string) {
@@ -317,7 +327,7 @@ void load();
         <p>TECHNOLOGY CONTENT</p>
         <h1>技术页面管理</h1>
         <span>
-          维护技术总览与甲方要求的三个技术单页。编辑时始终读取最新版本，
+          维护技术总览与三个技术单页。编辑时始终读取最新版本，
           避免旧表单覆盖其他管理员的内容。
         </span>
       </div>
@@ -382,7 +392,7 @@ void load();
     <section class="content-section">
       <div class="section-heading">
         <div>
-          <span>甲方指定栏目</span>
+          <span>其他栏目</span>
           <h2>三个可编辑技术单页</h2>
         </div>
         <p>每个页面均可独立编辑、发布或下线，并拥有独立 SEO 信息。</p>
@@ -515,23 +525,52 @@ void load();
 
         <ElDivider content-position="left">核心内容模块</ElDivider>
         <p class="field-help">
-          这些模块会显示为页面上半部分的重点技术卡片，无需再手写 JSON。
+          这些模块会显示为页面上半部分的重点技术卡片。每个模块可独立选择素材库图片。
         </p>
         <div
           v-for="(block, index) in form.capabilityRows"
           :key="`capability-${index}`"
-          class="block-editor"
+          class="block-editor capability-block-editor"
         >
-          <ElInput
-            v-model="block.title"
-            :placeholder="`模块 ${index + 1} 标题`"
-          />
-          <ElInput
-            v-model="block.description"
-            :rows="2"
-            placeholder="模块说明"
-            type="textarea"
-          />
+          <div class="block-copy-editor">
+            <ElInput
+              v-model="block.title"
+              :aria-label="`模块 ${index + 1} 标题`"
+              :placeholder="`模块 ${index + 1} 标题`"
+            />
+            <ElInput
+              v-model="block.description"
+              :aria-label="`模块 ${index + 1} 说明`"
+              :rows="3"
+              placeholder="模块说明"
+              type="textarea"
+            />
+          </div>
+          <div class="block-media-editor">
+            <ElSelect
+              v-model="block.imageMediaId"
+              :aria-label="`模块 ${index + 1} 图片`"
+              clearable
+              filterable
+              placeholder="选择模块图片"
+              style="width: 100%"
+            >
+              <ElOption
+                v-for="item in mediaOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </ElSelect>
+            <ElImage
+              v-if="blockPreview(block.imageMediaId)"
+              :alt="block.title || `模块 ${index + 1} 图片预览`"
+              :preview-src-list="[blockPreview(block.imageMediaId)]"
+              :src="blockPreview(block.imageMediaId)"
+              class="block-image-preview"
+              fit="cover"
+            />
+          </div>
           <ElButton
             plain
             type="danger"
@@ -541,8 +580,8 @@ void load();
           </ElButton>
         </div>
         <ElButton plain @click="addBlock('capabilityRows')">
-+ 添加内容模块
-</ElButton>
+          + 添加内容模块
+        </ElButton>
 
         <ElDivider content-position="left">技术亮点 / 应用方向</ElDivider>
         <div
@@ -567,12 +606,11 @@ void load();
         <ElButton plain @click="addBlock('pillars')">+ 添加技术亮点</ElButton>
 
         <ElDivider content-position="left">正文与行动按钮</ElDivider>
-        <ElFormItem label="补充正文 HTML">
-          <ElInput
+        <ElFormItem label="补充正文">
+          <RichTextMediaEditor
             v-model="form.contentHtml"
-            :rows="8"
-            placeholder="可填写段落、标题、列表和链接；后端保存时会安全清洗"
-            type="textarea"
+            :min-height="240"
+            placeholder="请输入补充正文；可设置字体、字号、颜色、对齐方式，并从工具栏插入图片"
           />
         </ElFormItem>
         <ElRow :gutter="18">
@@ -812,6 +850,22 @@ void load();
   margin-bottom: 10px;
   background: #f6f8f8;
   border-radius: 10px;
+}
+
+.capability-block-editor {
+  grid-template-columns: minmax(280px, 1fr) 220px auto;
+}
+
+.block-copy-editor,
+.block-media-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.block-image-preview {
+  width: 100%;
+  height: 118px;
+  border-radius: 8px;
 }
 
 @media (max-width: 900px) {
