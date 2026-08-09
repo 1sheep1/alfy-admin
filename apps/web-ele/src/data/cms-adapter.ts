@@ -7,7 +7,6 @@ function status(value?: string): ContentItem['status'] {
   if (normalized === 'offline') return 'offline';
   return 'draft';
 }
-
 export function mediaUrl(id?: null | number) {
   if (!id) return '';
   const base = String(import.meta.env.VITE_GLOB_API_URL || '/api/v1').replace(
