@@ -125,6 +125,13 @@ const stats = computed(() => ({
 const imageOptions = computed(() =>
   cmsState.media.filter((asset) => asset.type === 'image'),
 );
+const inlineMediaPreviewUrls = computed<Record<number, string>>(() => {
+  const urls: Record<number, string> = {};
+  for (const asset of imageOptions.value) {
+    if (asset.url) urls[asset.id] = asset.url;
+  }
+  return urls;
+});
 const selectedInlineMedia = computed(() =>
   imageOptions.value.find((asset) => asset.id === selectedInlineMediaId.value),
 );
@@ -1072,6 +1079,7 @@ function homePlacementLabel(value: unknown) {
                 ref="contentEditorRef"
                 v-model="form.contentHtml"
                 :media-image-picker="true"
+                :media-preview-urls="inlineMediaPreviewUrls"
                 :min-height="300"
                 placeholder="请输入正文；可设置字体、字号、颜色、对齐方式，并从工具栏插入图片"
                 @request-image="openInlineImagePicker"
@@ -1279,7 +1287,7 @@ function homePlacementLabel(value: unknown) {
       <iframe
         :srcdoc="contentPreviewDocument"
         class="content-preview-frame"
-        sandbox=""
+        sandbox="allow-same-origin"
         title="官网正文预览"
       ></iframe>
     </ElDialog>
