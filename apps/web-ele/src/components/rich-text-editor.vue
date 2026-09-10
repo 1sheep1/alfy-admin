@@ -77,6 +77,23 @@ const ALIGNABLE_TAGS = new Set([
   'LI',
   'P',
 ]);
+const STRUCTURAL_BLOCK_TAGS = new Set([
+  'BLOCKQUOTE',
+  'FIGURE',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'HR',
+  'LI',
+  'OL',
+  'P',
+  'PRE',
+  'TABLE',
+  'UL',
+]);
 
 const allowedPasteTags = new Set([
   'A',
@@ -146,6 +163,33 @@ function restoreSelection() {
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(savedRange);
+}
+
+/**
+ * Toolbar controls can move focus away from contenteditable. Some browsers
+ * synchronously collapse that selection while focus is moving, so capture the
+ * range before focusing and restore the independent copy afterwards.
+ */
+function focusAndRestoreEditorSelection() {
+  const editor = editorRef.value;
+  if (!editor) return undefined;
+  const range =
+    savedRange && isEditorSelection(savedRange)
+      ? savedRange.cloneRange()
+      : undefined;
+
+  editor.focus();
+  if (range) {
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return range;
+  }
+
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return undefined;
+  const currentRange = selection.getRangeAt(0);
+  return isEditorSelection(currentRange) ? currentRange : undefined;
 }
 
 function normalizeHtml(editor: HTMLElement) {
@@ -259,12 +303,117 @@ function normalizeEditorMarkup() {
   for (const span of editor.querySelectorAll('span')) {
     if (span.attributes.length === 0) span.replaceWith(...span.childNodes);
   }
+
+  normalizeRichTextStructure(editor);
+}
+
+function isStructuralContainer(element: HTMLElement) {
+  if (element.tagName !== 'DIV') return false;
+  return [...element.children].some(
+    (child) =>
+      child.tagName === 'BR' || STRUCTURAL_BLOCK_TAGS.has(child.tagName),
+  );
+}
+
+/**
+ * Older imported content can be a single <div> containing titles, <br>s and
+ * figures. text-align on that wrapper is inherited by every child, so one
+ * title cannot be formatted independently. Split it into semantic siblings
+ * and carry a legacy wrapper alignment to the first text paragraph only.
+ */
+function normalizeStructuralContainers(editor: HTMLElement) {
+  const containers = [...editor.querySelectorAll<HTMLElement>('div')]
+    .filter(isStructuralContainer)
+    .reverse();
+
+  for (const container of containers) {
+    const fragment = document.createDocumentFragment();
+    const inheritedAlignment = container.dataset.align;
+    let activeParagraph: HTMLParagraphElement | undefined;
+    let firstTextParagraph: HTMLParagraphElement | undefined;
+
+    for (const child of [...container.childNodes]) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const element = child as HTMLElement;
+        if (element.tagName === 'BR') {
+          activeParagraph = undefined;
+          continue;
+        }
+        if (STRUCTURAL_BLOCK_TAGS.has(element.tagName)) {
+          activeParagraph = undefined;
+          if (element.tagName === 'P') {
+            firstTextParagraph ||= element as HTMLParagraphElement;
+          }
+          fragment.append(element);
+          continue;
+        }
+      }
+
+      if (child.nodeType === Node.TEXT_NODE && !child.textContent?.trim()) {
+        continue;
+      }
+      if (!activeParagraph) {
+        activeParagraph = document.createElement('p');
+        firstTextParagraph ||= activeParagraph;
+        fragment.append(activeParagraph);
+      }
+      activeParagraph.append(child);
+    }
+
+    if (inheritedAlignment && firstTextParagraph && !firstTextParagraph.dataset.align) {
+      firstTextParagraph.dataset.align = inheritedAlignment;
+    }
+    container.replaceWith(fragment);
+  }
+}
+
+function normalizeMalformedFigures(editor: HTMLElement) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const figures = [...editor.querySelectorAll<HTMLElement>('figure')].reverse();
+    for (const figure of figures) {
+      const meaningfulChildren = [...figure.childNodes].filter(
+        (child) =>
+          child.nodeType !== Node.TEXT_NODE || Boolean(child.textContent?.trim()),
+      );
+      const hasDirectMedia = [...figure.children].some((child) =>
+        ['IMG', 'VIDEO'].includes(child.tagName),
+      );
+      if (
+        meaningfulChildren.length > 0 &&
+        !hasDirectMedia &&
+        meaningfulChildren.every(
+          (child) =>
+            child.nodeType === Node.ELEMENT_NODE &&
+            ['FIGURE', 'P'].includes((child as HTMLElement).tagName),
+        )
+      ) {
+        figure.replaceWith(...meaningfulChildren);
+        changed = true;
+        continue;
+      }
+
+      // Figures are media blocks. Legacy editor output could wrap a label in
+      // one, causing a label's alignment to propagate to neighbouring media.
+      if (!figure.querySelector('img, video')) {
+        const paragraph = document.createElement('p');
+        paragraph.replaceChildren(...figure.childNodes);
+        figure.replaceWith(paragraph);
+        changed = true;
+      }
+    }
+  }
+}
+
+function normalizeRichTextStructure(editor: HTMLElement) {
+  normalizeMalformedFigures(editor);
+  normalizeStructuralContainers(editor);
 }
 
 function runCommand(command: string, value?: string) {
   if (props.disabled || sourceMode.value) return;
-  editorRef.value?.focus();
-  restoreSelection();
+  focusAndRestoreEditorSelection();
   document.execCommand(command, false, value);
   normalizeEditorMarkup();
   emitEditorHtml();
@@ -297,9 +446,101 @@ function applyColor(event: Event, command: 'backColor' | 'foreColor') {
   (event.target as HTMLSelectElement).value = '';
 }
 
+function closestAlignableBlock(node: Node, editor: HTMLElement) {
+  let current =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as HTMLElement)
+      : node.parentElement;
+
+  while (current && current !== editor) {
+    if (ALIGNABLE_TAGS.has(current.tagName)) return current;
+    current = current.parentElement;
+  }
+  return undefined;
+}
+
+function wrapLooseContentInParagraph(node: Node, editor: HTMLElement) {
+  let topLevelNode = node;
+  while (topLevelNode.parentNode && topLevelNode.parentNode !== editor) {
+    topLevelNode = topLevelNode.parentNode;
+  }
+  if (topLevelNode.parentNode !== editor) return undefined;
+
+  const paragraph = document.createElement('p');
+  editor.insertBefore(paragraph, topLevelNode);
+  paragraph.append(topLevelNode);
+  return paragraph;
+}
+
+function selectedAlignableBlocks(range: Range, editor: HTMLElement) {
+  const blocks = new Set<HTMLElement>();
+
+  if (range.collapsed) {
+    const block =
+      closestAlignableBlock(range.startContainer, editor) ||
+      wrapLooseContentInParagraph(range.startContainer, editor);
+    if (block) blocks.add(block);
+    return blocks;
+  }
+
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const selectedTextNodes: Node[] = [];
+  let textNode: Node | null;
+  while ((textNode = walker.nextNode())) {
+    if (textNode.textContent?.trim() && range.intersectsNode(textNode)) {
+      selectedTextNodes.push(textNode);
+    }
+  }
+
+  for (const selectedTextNode of selectedTextNodes) {
+    const block =
+      closestAlignableBlock(selectedTextNode, editor) ||
+      wrapLooseContentInParagraph(selectedTextNode, editor);
+    if (block) blocks.add(block);
+  }
+
+  // A selection can contain an empty block or an embedded element, neither of
+  // which has a text node for the walker to find. Preserve the expected
+  // paragraph-level behaviour for those selections as well.
+  if (blocks.size === 0) {
+    const startBlock =
+      closestAlignableBlock(range.startContainer, editor) ||
+      wrapLooseContentInParagraph(range.startContainer, editor);
+    const endBlock =
+      closestAlignableBlock(range.endContainer, editor) ||
+      wrapLooseContentInParagraph(range.endContainer, editor);
+    if (startBlock) blocks.add(startBlock);
+    if (endBlock) blocks.add(endBlock);
+  }
+  return blocks;
+}
+
 function applyAlignment(event: Event) {
   const value = (event.target as HTMLSelectElement).value;
-  if (value) runCommand(value);
+  const alignmentByCommand: Record<string, string> = {
+    justifyCenter: 'center',
+    justifyFull: 'justify',
+    justifyLeft: 'left',
+    justifyRight: 'right',
+  };
+  const alignment = alignmentByCommand[value];
+  const editor = editorRef.value;
+
+  if (alignment && editor && !props.disabled && !sourceMode.value) {
+    const range = focusAndRestoreEditorSelection();
+    if (range) {
+      for (const block of selectedAlignableBlocks(range, editor)) {
+        // Do not rely on document.execCommand('justify*'): browser engines can
+        // merge or rewrite adjacent blocks, making one paragraph's alignment
+        // unexpectedly reset another's. Persist one explicit value per block.
+        block.removeAttribute('align');
+        block.style.removeProperty('text-align');
+        if (alignment === 'left') delete block.dataset.align;
+        else block.dataset.align = alignment;
+      }
+      emitEditorHtml();
+    }
+  }
   (event.target as HTMLSelectElement).value = '';
 }
 
@@ -535,8 +776,7 @@ function handlePaste(event: ClipboardEvent) {
 
 function insertHtml(html: string) {
   if (props.disabled || sourceMode.value) return;
-  editorRef.value?.focus();
-  restoreSelection();
+  focusAndRestoreEditorSelection();
   document.execCommand(
     'insertHTML',
     false,
@@ -555,6 +795,7 @@ function toggleSourceMode() {
       const safeHtml = cleanPastedHtml(sourceValue.value);
       sourceValue.value = safeHtml;
       editorRef.value.innerHTML = renderMediaReferences(safeHtml);
+      normalizeRichTextStructure(editorRef.value);
       emitEditorHtml();
       editorRef.value.focus();
     });
@@ -582,6 +823,8 @@ watch(
     }
     if (editorRef.value && serializeEditorHtml(editorRef.value) !== nextValue) {
       editorRef.value.innerHTML = renderMediaReferences(nextValue);
+      normalizeRichTextStructure(editorRef.value);
+      emitEditorHtml();
     }
   },
 );
@@ -600,6 +843,8 @@ watch(
 onMounted(() => {
   if (editorRef.value) {
     editorRef.value.innerHTML = renderMediaReferences(props.modelValue || '');
+    normalizeRichTextStructure(editorRef.value);
+    emitEditorHtml();
   }
   document.addEventListener('selectionchange', rememberSelection);
 });
