@@ -346,14 +346,22 @@ export async function deleteContent(resource: ContentResource, id: number) {
 }
 
 export function setCaseHomeDisplay(id: number, visible: boolean) {
-  return requestClient.put<BackendContentRecord>(`/admin/cases/${id}/home-display`, { visible });
+  return requestClient.put<BackendContentRecord>(
+    `/admin/cases/${id}/home-display`,
+    { visible },
+  );
 }
 
 export function setCaseHomePinned(id: number, pinned: boolean) {
-  return requestClient.put<BackendContentRecord>(`/admin/cases/${id}/home-pinned`, { pinned });
+  return requestClient.put<BackendContentRecord>(
+    `/admin/cases/${id}/home-pinned`,
+    { pinned },
+  );
 }
 
-export function updateCaseHomeOrder(items: Array<{ id: number; sortOrder: number }>) {
+export function updateCaseHomeOrder(
+  items: Array<{ id: number; sortOrder: number }>,
+) {
   return requestClient.put('/admin/cases/home-order', { items });
 }
 
@@ -495,7 +503,8 @@ export async function listMedia(
   keyword = '',
   options: { page?: number; size?: number } = {},
 ) {
-  return (await listMediaPage(keyword, options)).records;
+  const page = await listMediaPage(keyword, options);
+  return page.records;
 }
 
 export function uploadMedia(file: File, altText = '') {
@@ -720,4 +729,77 @@ export function changePageHeroStatus(
 
 export function deletePageHero(id: number) {
   return requestClient.delete(`/admin/page-heroes/${id}`);
+}
+
+export interface TeamMemberRecord {
+  bio?: null | string;
+  enabled: boolean;
+  id: number;
+  name: string;
+  photoMediaId?: null | number;
+  photoUrl?: null | string;
+  role: string;
+  sortOrder: number;
+  updatedAt?: null | string;
+  version: number;
+}
+
+export interface BaseFacilityRecord {
+  address?: null | string;
+  enabled: boolean;
+  id: number;
+  imageMediaId?: null | number;
+  imageUrl?: null | string;
+  name: string;
+  sortOrder: number;
+  updatedAt?: null | string;
+  version: number;
+}
+
+export function listTeamMembers() {
+  return requestClient.get<TeamMemberRecord[]>('/admin/about/team-members');
+}
+
+export function saveTeamMember(
+  id: null | number,
+  payload: Record<string, unknown>,
+) {
+  return id
+    ? requestClient.put<TeamMemberRecord>(
+        `/admin/about/team-members/${id}`,
+        payload,
+      )
+    : requestClient.post<TeamMemberRecord>(
+        '/admin/about/team-members',
+        payload,
+      );
+}
+
+export function deleteTeamMember(id: number) {
+  return requestClient.delete(`/admin/about/team-members/${id}`);
+}
+
+export function listBaseFacilities() {
+  return requestClient.get<BaseFacilityRecord[]>(
+    '/admin/about/base-facilities',
+  );
+}
+
+export function saveBaseFacility(
+  id: null | number,
+  payload: Record<string, unknown>,
+) {
+  return id
+    ? requestClient.put<BaseFacilityRecord>(
+        `/admin/about/base-facilities/${id}`,
+        payload,
+      )
+    : requestClient.post<BaseFacilityRecord>(
+        '/admin/about/base-facilities',
+        payload,
+      );
+}
+
+export function deleteBaseFacility(id: number) {
+  return requestClient.delete(`/admin/about/base-facilities/${id}`);
 }

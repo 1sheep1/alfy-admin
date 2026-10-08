@@ -163,7 +163,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       {
         component: aboutPage,
-        meta: { icon: 'lucide:landmark', title: '关于我们' },
+        meta: { icon: 'lucide:users', title: '关于我们页面' },
         name: 'AboutPage',
         path: '/pages-content/about',
       },

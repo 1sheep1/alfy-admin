@@ -1,47 +1,44 @@
 <script lang="ts" setup>
-import type { UploadFile, UploadRawFile } from 'element-plus';
-import type { ContentPageRecord, MediaRecord } from '#/api';
+import type { UploadFile, UploadFiles, UploadRawFile } from 'element-plus';
 
-import { computed, reactive, ref } from 'vue';
+import type { BaseFacilityRecord, TeamMemberRecord } from '#/api';
+
+import { onMounted, reactive, ref } from 'vue';
 
 import {
   ElButton,
   ElCard,
-  ElEmpty,
+  ElDialog,
+  ElForm,
+  ElFormItem,
   ElImage,
   ElInput,
+  ElInputNumber,
   ElMessage,
   ElOption,
+  ElPopconfirm,
   ElSelect,
+  ElSwitch,
+  ElTable,
+  ElTableColumn,
   ElTag,
   ElUpload,
 } from 'element-plus';
 
 import {
-  listContentPages,
+  deleteBaseFacility,
+  deleteTeamMember,
+  getMediaPreviewUrl,
+  listBaseFacilities,
   listMedia,
-  saveContentPage,
+  listTeamMembers,
+  saveBaseFacility,
+  saveTeamMember,
   uploadMedia,
 } from '#/api';
+import { mediaUrl } from '#/data/cms-adapter';
 
-interface HistoryItemForm {
-  date: string;
-  imageMediaId?: number;
-  imageUrl?: string;
-  text: string;
-  title: string;
-}
-
-interface AboutContentData {
-  historyItems?: unknown;
-  [key: string]: unknown;
-}
-
-interface ImageOption {
-  id: number;
-  name: string;
-}
-
+// ---------- 素材选择（两个区块共用） ----------
 const MAX_IMAGE_SIZE = 30 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set([
   'image/gif',
@@ -50,285 +47,700 @@ const ALLOWED_IMAGE_TYPES = new Set([
   'image/webp',
 ]);
 
-const loading = ref(false);
-const saving = ref(false);
-const uploadingIndex = ref<number>();
-const page = ref<ContentPageRecord>();
-const originalData = ref<AboutContentData>({});
-const mediaOptions = ref<ImageOption[]>([]);
+interface MediaOption {
+  adminUrl: string;
+  id: number;
+  name: string;
+}
+
+const mediaOptions = ref<MediaOption[]>([]);
+const mediaLoading = ref(false);
 const mediaLoaded = ref(false);
-const form = reactive<{ historyItems: HistoryItemForm[] }>({
-  historyItems: [],
-});
+const mediaAdminUrlById = new Map<number, string>();
+// 预览缓存：mediaId -> 预览地址（blob 或公开地址）
+const previews = reactive<Record<number, string>>({});
 
-const hasPage = computed(() => Boolean(page.value));
-
-function emptyHistoryItem(): HistoryItemForm {
-  return { date: '', imageMediaId: undefined, imageUrl: '', text: '', title: '' };
-}
-
-function normalizeHistoryItem(value: unknown): HistoryItemForm {
-  const item = (value || {}) as Record<string, unknown>;
-  const imageMediaId = Number(item.imageMediaId);
-  return {
-    date: String(item.date || ''),
-    imageMediaId:
-      Number.isSafeInteger(imageMediaId) && imageMediaId > 0
-        ? imageMediaId
-        : undefined,
-    imageUrl: String(item.imageUrl || ''),
-    text: String(item.text || ''),
-    title: String(item.title || ''),
-  };
-}
-
-function contentDataFromPage(value?: ContentPageRecord): AboutContentData {
-  const data = value?.contentData;
-  return data && typeof data === 'object' && !Array.isArray(data)
-    ? (data as AboutContentData)
-    : {};
-}
-
-function publicMediaUrl(mediaId?: number) {
-  return mediaId ? `/api/v1/public/media/${mediaId}` : '';
-}
-
-function imagePreview(item: HistoryItemForm) {
-  return publicMediaUrl(item.imageMediaId) || item.imageUrl || '';
-}
-
-function imageAlt(item: HistoryItemForm, index: number) {
-  return item.title || item.date || `发展历程图片 ${index + 1}`;
-}
-
-function selectedImageName(mediaId?: number) {
-  return mediaOptions.value.find((item) => item.id === mediaId)?.name || '';
-}
-
-async function ensureMediaOptions() {
-  if (mediaLoaded.value) return;
-  const records = await listMedia('', { page: 1, size: 100 });
-  mediaOptions.value = records
-    .filter((item: MediaRecord) => item.mediaType === 'IMAGE')
-    .map((item) => ({ id: item.id, name: item.originalFilename }));
-  mediaLoaded.value = true;
-}
-
-async function load() {
-  loading.value = true;
+async function searchMedia(keyword = '') {
+  mediaLoading.value = true;
   try {
-    const pages = await listContentPages();
-    const about = pages.find((item) => item.pageKey === 'about');
-    if (!about) {
-      page.value = undefined;
-      form.historyItems = [];
-      return;
+    const records = await listMedia(keyword, { page: 1, size: 100 });
+    const merged = new Map(mediaOptions.value.map((item) => [item.id, item]));
+    for (const item of records.filter(
+      (record) => record.mediaType === 'IMAGE',
+    )) {
+      const option: MediaOption = {
+        adminUrl: item.adminUrl,
+        id: item.id,
+        name: item.originalFilename,
+      };
+      merged.set(item.id, option);
+      mediaAdminUrlById.set(item.id, item.adminUrl);
     }
-    page.value = about;
-    originalData.value = contentDataFromPage(about);
-    const historyItems = originalData.value.historyItems;
-    form.historyItems = Array.isArray(historyItems)
-      ? historyItems.map(normalizeHistoryItem)
-      : [];
-    await ensureMediaOptions();
+    mediaOptions.value = [...merged.values()];
+    mediaLoaded.value = true;
   } finally {
-    loading.value = false;
+    mediaLoading.value = false;
   }
 }
 
-function addHistoryItem() {
-  form.historyItems.push(emptyHistoryItem());
+function ensureMediaOptions() {
+  if (!mediaLoaded.value && !mediaLoading.value) void searchMedia();
 }
 
-function removeHistoryItem(index: number) {
-  form.historyItems.splice(index, 1);
+function resolvePreview(mediaId?: null | number): string {
+  if (!mediaId) return '';
+  if (previews[mediaId]) return previews[mediaId]!;
+  const adminUrl = mediaAdminUrlById.get(mediaId);
+  if (!adminUrl) return mediaUrl(mediaId);
+  getMediaPreviewUrl(adminUrl)
+    .then((url) => {
+      previews[mediaId] = url;
+    })
+    .catch(() => {
+      previews[mediaId] = mediaUrl(mediaId);
+    });
+  return previews[mediaId] || mediaUrl(mediaId);
 }
 
-function moveHistoryItem(index: number, direction: -1 | 1) {
-  const target = index + direction;
-  if (target < 0 || target >= form.historyItems.length) return;
-  const [item] = form.historyItems.splice(index, 1);
-  form.historyItems.splice(target, 0, item!);
-}
-
-function selectImage(item: HistoryItemForm, mediaId?: number) {
-  item.imageMediaId = mediaId || undefined;
-  if (mediaId) item.imageUrl = publicMediaUrl(mediaId);
-}
-
-function validateImage(raw?: UploadRawFile) {
-  if (!raw) return false;
-  if (!ALLOWED_IMAGE_TYPES.has(raw.type)) {
-    ElMessage.warning('请上传 JPG、PNG、WebP 或 GIF 图片');
+function validateImageFile(file: UploadRawFile) {
+  if (file.size > MAX_IMAGE_SIZE) {
+    ElMessage.error('单张图片不能超过 30MB');
     return false;
   }
-  if (raw.size > MAX_IMAGE_SIZE) {
-    ElMessage.warning('单张图片不能超过 30 MB');
+  if (!ALLOWED_IMAGE_TYPES.has(file.type.toLowerCase())) {
+    ElMessage.error('仅支持 JPG、PNG、WebP 和 GIF 图片');
     return false;
   }
   return true;
 }
 
-async function uploadHistoryImage(
-  item: HistoryItemForm,
-  index: number,
-  uploadFile: UploadFile,
-) {
-  const raw = uploadFile.raw;
-  if (!validateImage(raw)) return;
-  uploadingIndex.value = index;
+// ---------- 团队成员 ----------
+const teamRows = ref<TeamMemberRecord[]>([]);
+const teamLoading = ref(false);
+const teamDialogVisible = ref(false);
+const teamSaving = ref(false);
+const teamUploadFileList = ref<UploadFile[]>([]);
+const teamUploading = ref(false);
+const teamForm = reactive({
+  bio: '',
+  enabled: true,
+  id: 0,
+  name: '',
+  photoMediaId: undefined as number | undefined,
+  role: '',
+  sortOrder: 0,
+  version: undefined as number | undefined,
+});
+
+async function loadTeam() {
+  teamLoading.value = true;
   try {
-    const media = await uploadMedia(raw!, `${item.date || '发展历程'}图片`);
-    item.imageMediaId = media.id;
-    item.imageUrl = publicMediaUrl(media.id);
-    if (!mediaOptions.value.some((option) => option.id === media.id)) {
-      mediaOptions.value.unshift({ id: media.id, name: media.originalFilename });
-    }
-    ElMessage.success('图片已上传并选中');
+    teamRows.value = await listTeamMembers();
   } finally {
-    uploadingIndex.value = undefined;
+    teamLoading.value = false;
   }
 }
 
-async function save() {
-  if (!page.value) return;
-  const invalidIndex = form.historyItems.findIndex(
-    (item) => !item.date.trim() || !imagePreview(item),
-  );
-  if (invalidIndex !== -1) {
-    ElMessage.warning(`请为第 ${invalidIndex + 1} 条填写年份/日期并选择图片`);
+function openTeamCreate() {
+  Object.assign(teamForm, {
+    bio: '',
+    enabled: true,
+    id: 0,
+    name: '',
+    photoMediaId: undefined,
+    role: '',
+    sortOrder: (teamRows.value.at(-1)?.sortOrder ?? 0) + 10,
+    version: undefined,
+  });
+  teamDialogVisible.value = true;
+  ensureMediaOptions();
+}
+
+function openTeamEdit(value: unknown) {
+  const row = value as TeamMemberRecord;
+  Object.assign(teamForm, {
+    ...row,
+    photoMediaId: row.photoMediaId ?? undefined,
+  });
+  teamDialogVisible.value = true;
+  ensureMediaOptions();
+}
+
+async function uploadTeamPhoto(_file: UploadFile, files: UploadFiles) {
+  const latest = files.at(-1)?.raw as undefined | UploadRawFile;
+  if (!latest || !validateImageFile(latest)) {
+    teamUploadFileList.value = [];
     return;
   }
-
-  saving.value = true;
+  teamUploading.value = true;
   try {
-    await saveContentPage(page.value.id, {
-      category: page.value.category || null,
-      contentData: {
-        ...originalData.value,
-        historyItems: form.historyItems.map((item) => ({
-          date: item.date.trim(),
-          imageMediaId: item.imageMediaId || null,
-          imageUrl: item.imageMediaId ? null : item.imageUrl || null,
-          text: item.text.trim() || null,
-          title: item.title.trim() || null,
-        })),
-      },
-      contentHtml: page.value.contentHtml || null,
-      coverMediaId: page.value.coverMediaId || null,
-      featured: Boolean(page.value.featured),
-      pageKey: page.value.pageKey,
-      seoDescription: page.value.seoDescription || null,
-      seoKeywords: page.value.seoKeywords || null,
-      seoTitle: page.value.seoTitle || null,
-      sortOrder: Number(page.value.sortOrder || 0),
-      summary: page.value.summary || null,
-      title: page.value.title,
-      version: page.value.version,
-    });
-    ElMessage.success('关于我们－发展历程已保存');
-    await load();
+    const saved = await uploadMedia(
+      latest,
+      latest.name.replace(/\.[^.]+$/, ''),
+    );
+    teamForm.photoMediaId = saved.id;
+    mediaAdminUrlById.set(saved.id, saved.adminUrl);
+    mediaOptions.value = [
+      ...mediaOptions.value.filter((item) => item.id !== saved.id),
+      { adminUrl: saved.adminUrl, id: saved.id, name: saved.originalFilename },
+    ];
+    ElMessage.success('头像已上传并保存到素材库');
   } finally {
-    saving.value = false;
+    teamUploading.value = false;
+    teamUploadFileList.value = [];
   }
 }
 
-void load();
+async function saveTeam() {
+  if (!teamForm.role.trim() || !teamForm.name.trim()) {
+    ElMessage.warning('请填写头衔和姓名');
+    return;
+  }
+  teamSaving.value = true;
+  try {
+    await saveTeamMember(teamForm.id || null, {
+      bio: teamForm.bio || null,
+      enabled: teamForm.enabled,
+      name: teamForm.name,
+      photoMediaId: teamForm.photoMediaId ?? null,
+      role: teamForm.role,
+      sortOrder: teamForm.sortOrder,
+      version: teamForm.version,
+    });
+    teamDialogVisible.value = false;
+    await loadTeam();
+    ElMessage.success('团队成员已保存');
+  } finally {
+    teamSaving.value = false;
+  }
+}
+
+async function removeTeam(id: number) {
+  await deleteTeamMember(id);
+  await loadTeam();
+  ElMessage.success('团队成员已删除');
+}
+
+// ---------- 产业布局 ----------
+const facilityRows = ref<BaseFacilityRecord[]>([]);
+const facilityLoading = ref(false);
+const facilityDialogVisible = ref(false);
+const facilitySaving = ref(false);
+const facilityUploadFileList = ref<UploadFile[]>([]);
+const facilityUploading = ref(false);
+const facilityForm = reactive({
+  address: '',
+  enabled: true,
+  id: 0,
+  imageMediaId: undefined as number | undefined,
+  name: '',
+  sortOrder: 0,
+  version: undefined as number | undefined,
+});
+
+async function loadFacilities() {
+  facilityLoading.value = true;
+  try {
+    facilityRows.value = await listBaseFacilities();
+  } finally {
+    facilityLoading.value = false;
+  }
+}
+
+function openFacilityCreate() {
+  Object.assign(facilityForm, {
+    address: '',
+    enabled: true,
+    id: 0,
+    imageMediaId: undefined,
+    name: '',
+    sortOrder: (facilityRows.value.at(-1)?.sortOrder ?? 0) + 10,
+    version: undefined,
+  });
+  facilityDialogVisible.value = true;
+  ensureMediaOptions();
+}
+
+function openFacilityEdit(value: unknown) {
+  const row = value as BaseFacilityRecord;
+  Object.assign(facilityForm, {
+    ...row,
+    imageMediaId: row.imageMediaId ?? undefined,
+  });
+  facilityDialogVisible.value = true;
+  ensureMediaOptions();
+}
+
+async function uploadFacilityImage(_file: UploadFile, files: UploadFiles) {
+  const latest = files.at(-1)?.raw as undefined | UploadRawFile;
+  if (!latest || !validateImageFile(latest)) {
+    facilityUploadFileList.value = [];
+    return;
+  }
+  facilityUploading.value = true;
+  try {
+    const saved = await uploadMedia(
+      latest,
+      latest.name.replace(/\.[^.]+$/, ''),
+    );
+    facilityForm.imageMediaId = saved.id;
+    mediaAdminUrlById.set(saved.id, saved.adminUrl);
+    mediaOptions.value = [
+      ...mediaOptions.value.filter((item) => item.id !== saved.id),
+      { adminUrl: saved.adminUrl, id: saved.id, name: saved.originalFilename },
+    ];
+    ElMessage.success('图片已上传并保存到素材库');
+  } finally {
+    facilityUploading.value = false;
+    facilityUploadFileList.value = [];
+  }
+}
+
+async function saveFacility() {
+  if (!facilityForm.name.trim()) {
+    ElMessage.warning('请填写基地名称');
+    return;
+  }
+  facilitySaving.value = true;
+  try {
+    await saveBaseFacility(facilityForm.id || null, {
+      address: facilityForm.address || null,
+      enabled: facilityForm.enabled,
+      imageMediaId: facilityForm.imageMediaId ?? null,
+      name: facilityForm.name,
+      sortOrder: facilityForm.sortOrder,
+      version: facilityForm.version,
+    });
+    facilityDialogVisible.value = false;
+    await loadFacilities();
+    ElMessage.success('产业布局已保存');
+  } finally {
+    facilitySaving.value = false;
+  }
+}
+
+async function removeFacility(id: number) {
+  await deleteBaseFacility(id);
+  await loadFacilities();
+  ElMessage.success('产业布局已删除');
+}
+
+onMounted(() => {
+  void loadTeam();
+  void loadFacilities();
+  ensureMediaOptions();
+});
 </script>
 
 <template>
-  <div class="about-page-admin">
-    <section class="about-page-hero">
+  <div class="about-page">
+    <section class="page-header">
       <div>
-        <p>ABOUT CONTENT</p>
-        <h1>关于我们</h1>
-        <span>维护官网“发展历程”的日期、文字、图片与展示顺序。保存后官网会自动使用最新内容。</span>
+        <p>ABOUT PAGE</p>
+        <h1>关于我们页面</h1>
+        <span>维护官网关于我们页面的核心研发团队与产业布局内容</span>
       </div>
-      <ElTag type="success">{{ form.historyItems.length }} 条历程</ElTag>
     </section>
 
-    <ElCard v-loading="loading" class="history-card" shadow="never">
-      <template #header>
-        <div class="card-header">
-          <div>
-            <h2>发展历程</h2>
-            <p>图片可从素材库选择或直接上传；拖动前请使用上下按钮调整官网展示顺序。</p>
-          </div>
-          <ElButton :disabled="!hasPage" plain type="primary" @click="addHistoryItem">
-            + 新增历程
-          </ElButton>
+    <ElCard class="table-card" shadow="never" v-loading="teamLoading">
+      <div class="card-toolbar">
+        <div class="card-title">
+          <h2>核心研发团队</h2>
+          <span>按排序值展示，官网轮播顺序与此一致</span>
         </div>
-      </template>
-
-      <ElEmpty v-if="!hasPage" description="未找到 about 单页记录，请先完成数据库初始化" />
-      <div v-else class="history-list">
-        <article v-for="(item, index) in form.historyItems" :key="index" class="history-item-editor">
-          <div class="history-item-index">{{ String(index + 1).padStart(2, '0') }}</div>
-          <div class="history-item-fields">
-            <div class="form-grid form-grid--top">
-              <ElInput v-model="item.date" maxlength="30" placeholder="年份或日期，例如 2026年" />
-              <ElInput v-model="item.title" maxlength="80" placeholder="标题（可留空）" />
-            </div>
-            <ElInput v-model="item.text" :rows="2" maxlength="300" placeholder="说明（可留空）" type="textarea" />
-            <div class="image-control">
-              <ElSelect
-                :model-value="item.imageMediaId"
-                clearable
-                filterable
-                placeholder="从素材库选择图片"
-                @update:model-value="(value) => selectImage(item, Number(value) || undefined)"
-              >
-                <ElOption v-for="option in mediaOptions" :key="option.id" :label="option.name" :value="option.id" />
-              </ElSelect>
-              <ElUpload
-                :auto-upload="false"
-                :disabled="uploadingIndex === index"
-                :show-file-list="false"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                @change="(file) => uploadHistoryImage(item, index, file)"
-              >
-                <ElButton :loading="uploadingIndex === index" plain>上传新图片</ElButton>
-              </ElUpload>
-              <small v-if="item.imageMediaId">当前素材：{{ selectedImageName(item.imageMediaId) || `#${item.imageMediaId}` }}</small>
-            </div>
-          </div>
-          <ElImage v-if="imagePreview(item)" :alt="imageAlt(item, index)" :preview-src-list="[imagePreview(item)]" :src="imagePreview(item)" class="history-image-preview" fit="cover" />
-          <div class="history-item-actions">
-            <ElButton :disabled="index === 0" circle plain @click="moveHistoryItem(index, -1)">↑</ElButton>
-            <ElButton :disabled="index === form.historyItems.length - 1" circle plain @click="moveHistoryItem(index, 1)">↓</ElButton>
-            <ElButton circle plain type="danger" @click="removeHistoryItem(index)">×</ElButton>
-          </div>
-        </article>
+        <ElButton type="primary" @click="openTeamCreate">新增成员</ElButton>
       </div>
-
-      <div v-if="hasPage" class="save-bar">
-        <span>官网当前状态：{{ page?.status === 'PUBLISHED' ? '已发布' : '未发布' }}</span>
-        <ElButton :loading="saving" type="primary" @click="save">保存发展历程</ElButton>
-      </div>
+      <ElTable :data="teamRows" row-key="id">
+        <ElTableColumn label="头像" width="100">
+          <template #default="{ row }">
+            <ElImage
+              v-if="row.photoMediaId"
+              :preview-src-list="[resolvePreview(row.photoMediaId)]"
+              :src="resolvePreview(row.photoMediaId)"
+              class="team-thumb"
+              fit="cover"
+            />
+            <div v-else class="thumb-placeholder">未设置</div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="头衔" prop="role" width="150" />
+        <ElTableColumn label="姓名" prop="name" width="140" />
+        <ElTableColumn
+          label="个人简介"
+          min-width="260"
+          prop="bio"
+          show-overflow-tooltip
+        />
+        <ElTableColumn label="状态" width="90">
+          <template #default="{ row }">
+            <ElTag :type="row.enabled ? 'success' : 'info'">
+              {{ row.enabled ? '显示' : '隐藏' }}
+            </ElTag>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="排序" prop="sortOrder" width="80" />
+        <ElTableColumn fixed="right" label="操作" width="150">
+          <template #default="{ row }">
+            <ElButton link type="primary" @click="openTeamEdit(row)">
+              编辑
+            </ElButton>
+            <ElPopconfirm
+              title="确定删除该团队成员？"
+              @confirm="removeTeam(row.id)"
+            >
+              <template #reference>
+                <ElButton link type="danger">删除</ElButton>
+              </template>
+            </ElPopconfirm>
+          </template>
+        </ElTableColumn>
+      </ElTable>
     </ElCard>
+
+    <ElCard class="table-card" shadow="never" v-loading="facilityLoading">
+      <div class="card-toolbar">
+        <div class="card-title">
+          <h2>发展引擎 · 产业布局</h2>
+          <span>官网“构建研产销一体化产业布局”板块的基地卡片</span>
+        </div>
+        <ElButton type="primary" @click="openFacilityCreate">新增基地</ElButton>
+      </div>
+      <ElTable :data="facilityRows" row-key="id">
+        <ElTableColumn label="图片" width="160">
+          <template #default="{ row }">
+            <ElImage
+              v-if="row.imageMediaId"
+              :preview-src-list="[resolvePreview(row.imageMediaId)]"
+              :src="resolvePreview(row.imageMediaId)"
+              class="facility-thumb"
+              fit="cover"
+            />
+            <div v-else class="thumb-placeholder">未设置</div>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="基地名称" min-width="220" prop="name" />
+        <ElTableColumn
+          label="地址"
+          min-width="260"
+          prop="address"
+          show-overflow-tooltip
+        />
+        <ElTableColumn label="状态" width="90">
+          <template #default="{ row }">
+            <ElTag :type="row.enabled ? 'success' : 'info'">
+              {{ row.enabled ? '显示' : '隐藏' }}
+            </ElTag>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="排序" prop="sortOrder" width="80" />
+        <ElTableColumn fixed="right" label="操作" width="150">
+          <template #default="{ row }">
+            <ElButton link type="primary" @click="openFacilityEdit(row)">
+              编辑
+            </ElButton>
+            <ElPopconfirm
+              title="确定删除该基地？"
+              @confirm="removeFacility(row.id)"
+            >
+              <template #reference>
+                <ElButton link type="danger">删除</ElButton>
+              </template>
+            </ElPopconfirm>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+    </ElCard>
+
+    <ElDialog
+      v-model="teamDialogVisible"
+      :close-on-click-modal="false"
+      :title="teamForm.id ? '编辑团队成员' : '新增团队成员'"
+      width="640px"
+    >
+      <ElForm :model="teamForm" label-position="top">
+        <ElRow :gutter="16">
+          <ElCol :md="8" :xs="24">
+            <ElFormItem label="头衔" required>
+              <ElInput
+                v-model="teamForm.role"
+                maxlength="100"
+                placeholder="例如：技术带头人"
+              />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :md="8" :xs="24">
+            <ElFormItem label="姓名" required>
+              <ElInput v-model="teamForm.name" maxlength="100" />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :md="8" :xs="24">
+            <ElFormItem label="排序">
+              <ElInputNumber
+                v-model="teamForm.sortOrder"
+                :min="0"
+                style="width: 100%"
+              />
+            </ElFormItem>
+          </ElCol>
+        </ElRow>
+        <ElFormItem label="个人简介">
+          <ElInput
+            v-model="teamForm.bio"
+            :rows="3"
+            maxlength="1000"
+            show-word-limit
+            type="textarea"
+          />
+        </ElFormItem>
+        <ElFormItem label="头像">
+          <div class="image-field">
+            <ElSelect
+              v-model="teamForm.photoMediaId"
+              :loading="mediaLoading"
+              :remote-method="searchMedia"
+              allow-create
+              clearable
+              filterable
+              placeholder="从素材库选择"
+              remote
+              style="width: 100%"
+              @visible-change="
+                (visible: boolean) => visible && ensureMediaOptions()
+              "
+            >
+              <ElOption
+                v-for="item in mediaOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </ElSelect>
+            <ElUpload
+              v-model:file-list="teamUploadFileList"
+              :auto-upload="false"
+              :on-change="uploadTeamPhoto"
+              :show-file-list="false"
+              accept=".jpg,.jpeg,.png,.webp,.gif"
+            >
+              <ElButton :loading="teamUploading">从本地上传</ElButton>
+            </ElUpload>
+          </div>
+          <ElImage
+            v-if="teamForm.photoMediaId"
+            :preview-src-list="[resolvePreview(teamForm.photoMediaId)]"
+            :src="resolvePreview(teamForm.photoMediaId)"
+            class="dialog-preview"
+            fit="cover"
+          />
+        </ElFormItem>
+        <ElFormItem label="官网显示">
+          <ElSwitch v-model="teamForm.enabled" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="teamDialogVisible = false">取消</ElButton>
+        <ElButton :loading="teamSaving" type="primary" @click="saveTeam">
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
+
+    <ElDialog
+      v-model="facilityDialogVisible"
+      :close-on-click-modal="false"
+      :title="facilityForm.id ? '编辑基地' : '新增基地'"
+      width="640px"
+    >
+      <ElForm :model="facilityForm" label-position="top">
+        <ElRow :gutter="16">
+          <ElCol :md="16" :xs="24">
+            <ElFormItem label="基地名称" required>
+              <ElInput
+                v-model="facilityForm.name"
+                maxlength="100"
+                placeholder="例如：湖南省浏阳市研发基地"
+              />
+            </ElFormItem>
+          </ElCol>
+          <ElCol :md="8" :xs="24">
+            <ElFormItem label="排序">
+              <ElInputNumber
+                v-model="facilityForm.sortOrder"
+                :min="0"
+                style="width: 100%"
+              />
+            </ElFormItem>
+          </ElCol>
+        </ElRow>
+        <ElFormItem label="地址">
+          <ElInput
+            v-model="facilityForm.address"
+            :rows="2"
+            maxlength="200"
+            show-word-limit
+            type="textarea"
+          />
+        </ElFormItem>
+        <ElFormItem label="展示图片">
+          <div class="image-field">
+            <ElSelect
+              v-model="facilityForm.imageMediaId"
+              :loading="mediaLoading"
+              :remote-method="searchMedia"
+              allow-create
+              clearable
+              filterable
+              placeholder="从素材库选择"
+              remote
+              style="width: 100%"
+              @visible-change="
+                (visible: boolean) => visible && ensureMediaOptions()
+              "
+            >
+              <ElOption
+                v-for="item in mediaOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"
+              />
+            </ElSelect>
+            <ElUpload
+              v-model:file-list="facilityUploadFileList"
+              :auto-upload="false"
+              :on-change="uploadFacilityImage"
+              :show-file-list="false"
+              accept=".jpg,.jpeg,.png,.webp,.gif"
+            >
+              <ElButton :loading="facilityUploading">从本地上传</ElButton>
+            </ElUpload>
+          </div>
+          <ElImage
+            v-if="facilityForm.imageMediaId"
+            :preview-src-list="[resolvePreview(facilityForm.imageMediaId)]"
+            :src="resolvePreview(facilityForm.imageMediaId)"
+            class="dialog-preview"
+            fit="cover"
+          />
+        </ElFormItem>
+        <ElFormItem label="官网显示">
+          <ElSwitch v-model="facilityForm.enabled" />
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <ElButton @click="facilityDialogVisible = false">取消</ElButton>
+        <ElButton
+          :loading="facilitySaving"
+          type="primary"
+          @click="saveFacility"
+        >
+          保存
+        </ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
 <style scoped>
-.about-page-admin { min-height: 100%; padding: 24px; background: #f5f7f8; }
-.about-page-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px; color: #fff; background: radial-gradient(circle at 82% 20%, rgb(109 182 137 / 32%), transparent 26%), linear-gradient(120deg, #123d36, #1e715f); border-radius: 18px; box-shadow: 0 18px 50px rgb(18 61 54 / 16%); }
-.about-page-hero p { margin: 0; font-size: 11px; font-weight: 700; color: #a7ebc1; letter-spacing: .18em; }
-.about-page-hero h1 { margin: 5px 0 8px; font-size: 28px; }
-.about-page-hero span { display: block; max-width: 700px; line-height: 1.7; color: rgb(255 255 255 / 74%); }
-.history-card { margin-top: 24px; border: 1px solid #e2e8ea; border-radius: 16px; }
-.card-header, .save-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.card-header h2 { margin: 0; color: #17343b; }
-.card-header p { margin: 6px 0 0; font-size: 13px; color: #7e8a8f; }
-.history-list { display: grid; gap: 14px; }
-.history-item-editor { display: grid; grid-template-columns: 42px minmax(0, 1fr) 190px auto; gap: 14px; align-items: start; padding: 16px; background: #f6f8f8; border: 1px solid #e6eeee; border-radius: 12px; }
-.history-item-index { display: grid; place-items: center; width: 38px; height: 38px; color: #fff; font-size: 12px; font-weight: 800; background: #1e715f; border-radius: 10px; }
-.history-item-fields { display: grid; gap: 10px; }
-.form-grid { display: grid; grid-template-columns: minmax(150px, .5fr) minmax(220px, 1fr); gap: 10px; }
-.image-control { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; align-items: center; }
-.image-control small { grid-column: 1 / -1; color: #849195; }
-.history-image-preview { width: 190px; height: 128px; border-radius: 8px; background: #e8eeee; }
-.history-item-actions { display: grid; gap: 8px; }
-.save-bar { padding-top: 20px; margin-top: 20px; border-top: 1px solid #e7eeee; color: #718187; }
-@media (max-width: 900px) { .history-item-editor { grid-template-columns: 42px minmax(0, 1fr) auto; } .history-image-preview { grid-column: 2; } }
-@media (max-width: 640px) { .about-page-admin { padding: 14px; } .about-page-hero, .card-header, .save-bar { align-items: flex-start; flex-direction: column; } .history-item-editor, .form-grid, .image-control { grid-template-columns: 1fr; } .history-item-index, .history-image-preview { grid-column: auto; } .history-image-preview { width: 100%; height: 180px; } .history-item-actions { display: flex; } }
+.about-page {
+  min-height: 100%;
+  padding: 24px;
+  background: #f5f7f8;
+}
+
+.page-header {
+  padding: 28px 30px;
+  color: #fff;
+  background: linear-gradient(125deg, #102a35, #125b61);
+  border-radius: 18px;
+}
+
+.page-header p {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #78d2c8;
+  letter-spacing: 0.18em;
+}
+
+.page-header h1 {
+  margin: 5px 0;
+  font-size: 28px;
+}
+
+.page-header span {
+  color: rgb(255 255 255 / 68%);
+}
+
+.table-card {
+  margin-top: 16px;
+  border-radius: 16px;
+}
+
+.card-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.card-title h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #17363d;
+}
+
+.card-title span {
+  font-size: 12px;
+  color: #859398;
+}
+
+.team-thumb {
+  width: 64px;
+  height: 80px;
+  border-radius: 8px;
+}
+
+.facility-thumb {
+  width: 128px;
+  height: 80px;
+  border-radius: 8px;
+}
+
+.thumb-placeholder {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 80px;
+  font-size: 12px;
+  color: #9aa8ac;
+  background: #eef2f3;
+  border-radius: 8px;
+}
+
+.image-field {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.dialog-preview {
+  width: 160px;
+  height: 120px;
+  margin-top: 10px;
+  border-radius: 10px;
+}
+
+@media (max-width: 760px) {
+  .about-page {
+    padding: 14px;
+  }
+
+  .page-header {
+    padding: 22px;
+  }
+
+  .image-field {
+    flex-direction: column;
+  }
+}
 </style>
